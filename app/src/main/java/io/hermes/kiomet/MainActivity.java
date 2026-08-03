@@ -84,12 +84,6 @@ public class MainActivity extends Activity {
                     Log.i(TAG, "hook.js injected");
                 }
             }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request,
-                                        WebResourceError error) {
-                Log.e(TAG, "Load error: " + error.getDescription());
-            }
         });
     }
 
