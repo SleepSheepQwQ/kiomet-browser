@@ -1,44 +1,31 @@
 /*
- * hook.js — kiomet.com full-coverage interception harness
+ * hook.js — kiomet.com interception harness
  *
- * Injected INTO kiomet.com's HTML via shouldInterceptRequest (before </head>).
- * Patches WebSocket, fetch, WebAssembly BEFORE kiomet's scripts execute.
- *
- * Data pipeline: captured events → fetch POST → Bridge Server :9999
+ * Uses KiometBridge.send() (Java @JavascriptInterface) to POST data
+ * to the local bridge server. No CORS, no fetch, no WebSocket needed.
  */
 
 (function () {
   if (window.__hook) return;
   window.__hook = { booted: false };
 
-  const HOST   = "localhost";
-  const PORT   = 9998;
-  const BRIDGE = "http://" + HOST + ":" + PORT + "/log";
-
   const ts = () => Date.now();
 
-  // ─── send via fetch POST ───────────────────────────────────────
+  // ─── send via Java bridge ──────────────────────────────────────
   function send(event, data) {
     try {
-      const body = JSON.stringify({ event, ts: ts(), data: data || {} });
-      fetch(BRIDGE, {
-        method: "POST",
-        mode: "no-cors",         // don't need response
-        headers: { "Content-Type": "application/json" },
-        body: body,
-        keepalive: true,
-      }).catch(() => {});
+      if (window.KiometBridge) {
+        window.KiometBridge.send(JSON.stringify({ event, ts: ts(), data: data || {} }));
+      }
     } catch (e) { /* silently ignore */ }
   }
 
   // ─── heartbeat ─────────────────────────────────────────────────
-  setInterval(() => {
-    send("heartbeat", {});
-  }, 10000);
+  setInterval(() => send("heartbeat", {}), 10000);
 
   // ─── 1. WebSocket proxy (frame-level capture) ─────────────────
   const RealWebSocket = WebSocket;
-  const wsMap = new Map(); // ws -> { url, id }
+  const wsMap = new Map();
 
   function wrapWebSocket(url, protocols) {
     const wsId = "ws_" + Math.random().toString(36).slice(2, 8);
@@ -80,7 +67,6 @@
     ws.addEventListener("close", (e) => {
       send("ws.close", { id: wsId, url, code: e.code, reason: e.reason });
     });
-
     ws.addEventListener("error", (e) => {
       send("ws.error", { id: wsId, url, msg: String(e.message) });
     });
@@ -96,7 +82,7 @@
   WebSocket.CLOSING    = RealWebSocket.CLOSING;
   WebSocket.CLOSED     = RealWebSocket.CLOSED;
 
-  // ─── 2. fetch interceptor ────────────────────────────────────
+  // ─── 2. fetch + XHR interceptor ───────────────────────────────
   const origFetch = window.fetch;
   window.fetch = function (...args) {
     const u = args[0];
@@ -108,7 +94,6 @@
     return origFetch.apply(this, args);
   };
 
-  // ─── 3. XHR interceptor ──────────────────────────────────────
   const OrigXHR = window.XMLHttpRequest;
   window.XMLHttpRequest = function () {
     const xhr = new OrigXHR();
@@ -121,7 +106,7 @@
   };
   window.XMLHttpRequest.prototype = OrigXHR.prototype;
 
-  // ─── 4. WebAssembly capture ──────────────────────────────────
+  // ─── 3. WebAssembly capture ──────────────────────────────────
   function captureWasm(wasm) {
     const exp = wasm.exports;
     const keys = Object.keys(exp).filter(
@@ -133,11 +118,9 @@
       try {
         const mem = exp.memory.buffer;
         send("wasm.mem_info", { byteLength: mem.byteLength });
-        // dump first 256 KB
         const chunk = mem.slice(0, Math.min(mem.byteLength, 262144));
         send("wasm.mem_dump", {
-          offset: 0,
-          len: chunk.byteLength,
+          offset: 0, len: chunk.byteLength,
           data: Array.from(new Uint8Array(chunk)),
         });
       } catch (e) {
@@ -145,7 +128,6 @@
       }
     }
 
-    // watch memory growth
     let pages = exp.memory ? exp.memory.buffer.byteLength : 0;
     setInterval(() => {
       if (exp.memory && exp.memory.buffer.byteLength !== pages) {
@@ -155,27 +137,19 @@
     }, 1000);
   }
 
-  const origInstantiate = WebAssembly.instantiate;
+  const origInst = WebAssembly.instantiate;
   WebAssembly.instantiate = function (...args) {
-    const p = origInstantiate.apply(this, args);
-    p.then(({ instance, module }) => {
-      window.wasm = instance;
-      captureWasm(instance);
-    }).catch(() => {});
+    const p = origInst.apply(this, args);
+    p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
     return p;
   };
-
-  const origInstantiateStreaming = WebAssembly.instantiateStreaming;
   WebAssembly.instantiateStreaming = function (...args) {
-    const p = origInstantiateStreaming.apply(this, args);
-    p.then(({ instance, module }) => {
-      window.wasm = instance;
-      captureWasm(instance);
-    }).catch(() => {});
+    const p = WebAssembly.instantiateStreaming.apply(this, args);
+    p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
     return p;
   };
 
-  // ─── 5. console capture ──────────────────────────────────────
+  // ─── 4. console capture ──────────────────────────────────────
   ["log", "info", "warn", "error", "debug"].forEach((lvl) => {
     const orig = console[lvl];
     console[lvl] = function (...a) {
@@ -184,27 +158,8 @@
     };
   });
 
-  // ─── 6. global variable watcher ──────────────────────────────
-  const known = new Set(Object.keys(window));
-  setInterval(() => {
-    const newKeys = Object.keys(window).filter(k => !known.has(k));
-    if (newKeys.length > 0) {
-      send("globals", { keys: newKeys });
-      newKeys.forEach(k => known.add(k));
-    }
-  }, 2000);
-
-  // ─── 7. error / rejection capture ────────────────────────────
-  window.addEventListener("error", (e) => {
-    send("error", { msg: String(e.message), stack: String(e.error && e.error.stack) });
-  });
-  window.addEventListener("unhandledrejection", (e) => {
-    send("rejection", { reason: String(e.reason) });
-  });
-
-  // ─── 8. boot ─────────────────────────────────────────────────
+  // ─── 5. boot ─────────────────────────────────────────────────
   send("connected", { userAgent: navigator.userAgent });
   window.__hook.booted = true;
-  console.log("[hook] loaded. Bridge: " + BRIDGE);
 
 })();
