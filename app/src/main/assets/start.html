@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #1a2332; color: #aab; font: 16px/1.5 sans-serif; height: 100vh;
+         display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  #status { margin-bottom: 1rem; }
+  #logo   { font-size: 1.5rem; font-weight: bold; letter-spacing: 0.05em; color: #6ef; }
+  .dot { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+  <div id="logo">KIOMET SHELL</div>
+  <div id="status">Loading harness<span class="dot">...</span></div>
+  <script src="hook.js"></script>
+  <script>
+    // After hook.js boots, navigate to kiomet.com.
+    // hook.js itself will intercept the WebSocket before kiomet creates it.
+    window.addEventListener("load", function () {
+      if (window.__hook && window.__hook.booted) {
+        document.getElementById("status").textContent = "Hook ready. Launching kiomet.com";
+        setTimeout(function () {
+          window.location.href = "https://kiomet.com/";
+        }, 300);
+      } else {
+        // fallback — still go, hook may have failed silently
+        setTimeout(function () {
+          window.location.href = "https://kiomet.com/";
+        }, 1000);
+      }
+    });
+  </script>
+</body>
+</html>

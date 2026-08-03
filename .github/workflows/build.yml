@@ -1,0 +1,71 @@
+# kiomet-browser build action — Android + AAPT2
+name: Kiomet Browser Build
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-
+
+      - name: Decode key
+        env:
+          KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "$KEY" | base64 -d > app/release.keystore
+            echo "STORE_FILE=app/release.keystore" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew || chmod +x ./gradlew
+          if [ -n "$STORE_FILE" ]; then
+            ./gradlew assembleRelease --no-daemon
+          else
+            ./gradlew assembleDebug --no-daemon
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiomet-browser
+          path: app/build/outputs/apk/**/*.apk
+
+      - name: Commit APK to repo (optional)
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          mkdir -p apk
+          cp app/build/outputs/apk/**/*.apk apk/ 2>/dev/null || true
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
+          git add apk/
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: build APK"
+          git push
