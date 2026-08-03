@@ -1,4 +1,4 @@
-# kiomet-browser build action — Android + AAPT2
+# kiomet-browser build action
 name: Kiomet Browser Build
 
 on:
@@ -25,41 +25,44 @@ jobs:
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
+          path: ~/.gradle/caches
           key: gradle-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-
+          restore-keys: gradle-
 
-      - name: Decode key
+      - name: Install Gradle 8.7
+        run: |
+          curl -fsSL -o /tmp/gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Decode signing key
         env:
           KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
         run: |
           if [ -n "$KEY" ]; then
             echo "$KEY" | base64 -d > app/release.keystore
-            echo "STORE_FILE=app/release.keystore" >> "$GITHUB_ENV"
-            echo "STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}" >> "$GITHUB_ENV"
-            echo "KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "SIGN=true" >> "$GITHUB_ENV"
           fi
 
       - name: Build APK
         run: |
-          chmod +x gradlew || chmod +x ./gradlew
-          if [ -n "$STORE_FILE" ]; then
-            ./gradlew assembleRelease --no-daemon
+          cd /home/runner/work/kiomet-browser/kiomet-browser
+          gradle wrapper --gradle-version 8.7 2>/dev/null || true
+          if [ "$SIGN" = "true" ]; then
+            gradle assembleRelease --no-daemon
           else
-            ./gradlew assembleDebug --no-daemon
+            gradle assembleDebug --no-daemon
           fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kiomet-browser
-          path: app/build/outputs/apk/**/*.apk
+          path: |
+            app/build/outputs/apk/**/*.apk
 
-      - name: Commit APK to repo (optional)
+      - name: Commit APK
         if: ${{ github.ref == 'refs/heads/main' }}
         run: |
           mkdir -p apk
