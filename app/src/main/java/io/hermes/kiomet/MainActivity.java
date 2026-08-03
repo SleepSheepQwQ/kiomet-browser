@@ -1,5 +1,6 @@
 package io.hermes.kiomet;
 
+import android.app.Activity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.WindowManager;
@@ -10,20 +11,18 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import androidx.appcompat.app.AppCompatActivity;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Kiomet Browser — debug shell for kiomet.com protocol analysis.
  *
  * Strategy:
- *   Load kiomet.com directly, inject hook.js via onPageStarted
- *   BEFORE any page scripts execute. This guarantees WebSocket/fetch/
- *   WebAssembly constructors are patched before kiomet uses them.
+ *  Load kiomet.com directly, inject hook.js via onPageStarted
+ *  BEFORE any page scripts execute. This guarantees WebSocket/fetch/
+ *  WebAssembly constructors are patched before kiomet uses them.
  */
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
