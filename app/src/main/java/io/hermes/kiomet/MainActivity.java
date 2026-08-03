@@ -37,13 +37,12 @@ public class MainActivity extends Activity {
         ws.setAllowFileAccessFromFileURLs(true);
         ws.setAllowUniversalAccessFromFileURLs(true);
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        ws.setUseWideViewPoint(true);
+        ws.setUseWideViewPort(true);
         ws.setLoadWithOverviewMode(true);
         ws.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
-        if (BuildConfig.DEBUG) {
-            WebView.setWebContentsDebuggingEnabled(true);
-        }
+        // Enable Chrome DevTools protocol for remote debugging
+        WebView.setWebContentsDebuggingEnabled(true);
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
