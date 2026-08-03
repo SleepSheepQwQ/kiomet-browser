@@ -138,15 +138,21 @@
   }
 
   const origInst = WebAssembly.instantiate;
+  const origInstStreaming = WebAssembly.instantiateStreaming;
+
   WebAssembly.instantiate = function (...args) {
-    const p = origInst.apply(this, args);
-    p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
-    return p;
+    try {
+      const p = origInst(...args);
+      p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
+      return p;
+    } catch (e) { return origInst(...args); }
   };
   WebAssembly.instantiateStreaming = function (...args) {
-    const p = WebAssembly.instantiateStreaming.apply(this, args);
-    p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
-    return p;
+    try {
+      const p = origInstStreaming(...args);
+      p.then(({ instance }) => { window.wasm = instance; captureWasm(instance); }).catch(() => {});
+      return p;
+    } catch (e) { return origInstStreaming(...args); }
   };
 
   // ─── 4. console capture ──────────────────────────────────────
