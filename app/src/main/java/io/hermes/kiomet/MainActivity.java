@@ -43,6 +43,8 @@ public class MainActivity extends Activity {
 
         webView = findViewById(R.id.webview);
         bridge = new Bridge();
+        // Register bridge BEFORE page load (persists across navigations)
+        webView.addJavascriptInterface(bridge, "KiometBridge");
         configureWebView();
         webView.loadUrl(TARGET);
         Log.i(TAG, "Kiomet shell started. Bridge: " + BRIDGE);
