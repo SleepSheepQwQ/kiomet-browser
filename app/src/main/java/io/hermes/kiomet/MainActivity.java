@@ -28,6 +28,7 @@ public class MainActivity extends Activity {
     private static final String BRIDGE_HOST = "http://127.0.0.1:9998";
 
     private WebView webView;
+    private Bridge bridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,10 +40,8 @@ public class MainActivity extends Activity {
             WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         webView = findViewById(R.id.webview);
+        bridge = new Bridge();
         configureWebView();
-
-        // Add Java bridge BEFORE page loads
-        webView.addJavascriptInterface(new Bridge(), "KiometBridge");
 
         webView.loadUrl(TARGET);
         Log.i(TAG, "Kiomet shell started. Bridge: " + BRIDGE_HOST);
@@ -72,17 +71,18 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url,
                                       android.graphics.Bitmap favicon) {
                 Log.i(TAG, "Page started: " + url);
+                // Register bridge + inject hook BEFORE page scripts execute
+                webView.addJavascriptInterface(bridge, "KiometBridge");
+                String hook = readAsset("hook.js");
+                if (hook != null) {
+                    view.evaluateJavascript(hook, null);
+                    Log.i(TAG, "hook.js injected in onPageStarted");
+                }
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "Page finished: " + url);
-                // Inject hook.js AFTER page loads (via Java bridge, not fetch)
-                String hook = readAsset("hook.js");
-                if (hook != null) {
-                    view.evaluateJavascript(hook, null);
-                    Log.i(TAG, "hook.js injected");
-                }
             }
         });
     }
