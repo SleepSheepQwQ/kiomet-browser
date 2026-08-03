@@ -1,13 +1,9 @@
-# kiomet-browser build action
-name: Kiomet Browser Build
+name: Build
 
 on:
   push:
-    paths:
-      - 'app/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - '.github/workflows/build.yml'
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -16,11 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: "temurin"
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -29,46 +25,19 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Install Gradle 8.7
+      - name: Install Gradle
         run: |
-          curl -fsSL -o /tmp/gradle.zip \
-            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
           unzip -q /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
 
-      - name: Decode signing key
-        env:
-          KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
-        run: |
-          if [ -n "$KEY" ]; then
-            echo "$KEY" | base64 -d > app/release.keystore
-            echo "SIGN=true" >> "$GITHUB_ENV"
-          fi
-
       - name: Build APK
         run: |
-          cd /home/runner/work/kiomet-browser/kiomet-browser
           gradle wrapper --gradle-version 8.7 2>/dev/null || true
-          if [ "$SIGN" = "true" ]; then
-            gradle assembleRelease --no-daemon
-          else
-            gradle assembleDebug --no-daemon
-          fi
+          gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kiomet-browser
-          path: |
-            app/build/outputs/apk/**/*.apk
-
-      - name: Commit APK
-        if: ${{ github.ref == 'refs/heads/main' }}
-        run: |
-          mkdir -p apk
-          cp app/build/outputs/apk/**/*.apk apk/ 2>/dev/null || true
-          git config user.email "github-actions@github.com"
-          git config user.name "github-actions"
-          git add apk/
-          git diff --quiet && git diff --staged --quiet || git commit -m "chore: build APK"
-          git push
+          path: app/build/outputs/apk/**/*.apk
