@@ -10,11 +10,26 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.app.Activity;
+import androidx.appcompat.app.AppCompatActivity;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
-public class MainActivity extends Activity {
+/**
+ * Kiomet Browser — debug shell for kiomet.com protocol analysis.
+ *
+ * Strategy:
+ *   Load kiomet.com directly, inject hook.js via onPageStarted
+ *   BEFORE any page scripts execute. This guarantees WebSocket/fetch/
+ *   WebAssembly constructors are patched before kiomet uses them.
+ */
+public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "KBrowser";
+    private static final String TARGET = "https://kiomet.com/";
+
+    private WebView webView;
+    private String hookJsContent;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -25,12 +40,17 @@ public class MainActivity extends Activity {
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
-        WebView webView = findViewById(R.id.webview);
-        configureWebView(webView);
-        webView.loadUrl("file:///android_asset/start.html");
+        // Read hook.js from assets
+        hookJsContent = readAsset("hook.js");
+
+        webView = findViewById(R.id.webview);
+        configureWebView();
+        webView.loadUrl(TARGET);
+
+        Log.i(TAG, "Kiomet shell started. Target: " + TARGET);
     }
 
-    private void configureWebView(WebView webView) {
+    private void configureWebView() {
         WebSettings ws = webView.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
@@ -41,13 +61,14 @@ public class MainActivity extends Activity {
         ws.setLoadWithOverviewMode(true);
         ws.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
-        // Enable Chrome DevTools protocol for remote debugging
+        // CDP debugging
         WebView.setWebContentsDebuggingEnabled(true);
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage cm) {
-                Log.i(TAG, "[" + cm.sourceId() + ":" + cm.lineNumber() + "] " + cm.message());
+                Log.i(TAG, String.format("[%s:%d] %s",
+                    cm.sourceId(), cm.lineNumber(), cm.message()));
                 return super.onConsoleMessage(cm);
             }
         });
@@ -57,6 +78,11 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url,
                                       android.graphics.Bitmap favicon) {
                 Log.i(TAG, "Page started: " + url);
+                // Inject hook.js BEFORE page scripts execute
+                if (hookJsContent != null && url.contains("kiomet.com")) {
+                    webView.evaluateJavascript(hookJsContent, null);
+                    Log.i(TAG, "hook.js injected via evaluateJavascript");
+                }
             }
 
             @Override
@@ -70,5 +96,22 @@ public class MainActivity extends Activity {
                 Log.e(TAG, "Load error: " + error.getDescription());
             }
         });
+    }
+
+    private String readAsset(String filename) {
+        try {
+            InputStream is = getAssets().open(filename);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                baos.write(buf, 0, n);
+            }
+            is.close();
+            return baos.toString("UTF-8");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to read asset: " + filename, e);
+            return null;
+        }
     }
 }
