@@ -11,14 +11,23 @@
 
   const ts = () => Date.now();
 
-  // ─── send via Java bridge ──────────────────────────────────────
   function send(event, data) {
-    try {
-      if (window.KiometBridge) {
-        window.KiometBridge.send(JSON.stringify({ event, ts: ts(), data: data || {} }));
-      }
-    } catch (e) { /* silently ignore */ }
-  }
+      try {
+        const body = JSON.stringify({ event, ts: ts(), data: data || {} });
+        // Try Java bridge first (no CORS, no network restrictions)
+        if (window.KiometBridge) {
+          window.KiometBridge.send(body);
+        } else {
+          // Fallback: fetch POST
+          fetch("http://127.0.0.1:9998/log", {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: body,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch (e) { /* silently ignore */ }
+    }
 
   // ─── heartbeat ─────────────────────────────────────────────────
   setInterval(() => send("heartbeat", {}), 10000);
