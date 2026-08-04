@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private Bridge bridge;
+    private String hookJsContent;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,6 +44,8 @@ public class MainActivity extends Activity {
 
         webView = findViewById(R.id.webview);
         bridge = new Bridge();
+        hookJsContent = readAsset("hook.js");
+
         // Register bridge BEFORE page load (persists across navigations)
         webView.addJavascriptInterface(bridge, "KiometBridge");
         configureWebView();
@@ -69,21 +72,33 @@ public class MainActivity extends Activity {
         });
 
         webView.setWebViewClient(new WebViewClient() {
+            private boolean injected = false;
+
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 Log.i(TAG, "Page started: " + url);
-                // Register Java bridge + inject hook before page scripts execute
+                // Re-register bridge on each page load
                 webView.addJavascriptInterface(bridge, "KiometBridge");
-                String hook = readAsset("hook.js");
-                if (hook != null) {
-                    view.evaluateJavascript(hook, null);
-                    Log.i(TAG, "hook.js injected");
-                }
+                injected = false;
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "Page finished: " + url);
+                if (!injected && hookJsContent != null && url.contains("kiomet.com")) {
+                    // Inject hook via base64-encoded javascript: URL
+                    // This avoids any encoding issues with special characters
+                    try {
+                        String b64 = android.util.Base64.encodeToString(
+                            hookJsContent.getBytes("UTF-8"),
+                            android.util.Base64.NO_WRAP);
+                        view.loadUrl("javascript:try{eval(atob('" + b64 + "'))}catch(e){}");
+                        injected = true;
+                        Log.i(TAG, "hook.js injected via base64 javascript URL (" + hookJsContent.length() + " bytes)");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to inject hook.js", e);
+                    }
+                }
             }
         });
     }
