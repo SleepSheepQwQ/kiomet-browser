@@ -29,7 +29,7 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
-    private static final String BRIDGE = "http://127.0.0.1:9997/log";
+    private static final String BRIDGE = "http://127.0.0.1:9996/log";
 
     private WebView webView;
     private Bridge bridge;
