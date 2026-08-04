@@ -11,6 +11,9 @@
 
   const ts = () => Date.now();
 
+  // Save originals BEFORE patching — send() must use these, not patched versions
+  const origFetchX = window.fetch;
+
   function send(event, data) {
       try {
         const body = JSON.stringify({ event, ts: ts(), data: data || {} });
@@ -18,8 +21,8 @@
         if (window.KiometBridge) {
           window.KiometBridge.send(body);
         } else {
-          // Fallback: fetch POST
-          fetch("http://127.0.0.1:9998/log", {
+          // Use ORIGINAL fetch, not the patched one (would cause recursion)
+          origFetchX("http://127.0.0.1:9998/log", {
             method: "POST",
             headers: { "Content-Type": "text/plain" },
             body: body,
@@ -92,7 +95,6 @@
   WebSocket.CLOSED     = RealWebSocket.CLOSED;
 
   // ─── 2. fetch + XHR interceptor ───────────────────────────────
-  const origFetch = window.fetch;
   window.fetch = function (...args) {
     const u = args[0];
     const opts = args[1] || {};
@@ -100,7 +102,7 @@
       method: (opts.method || "GET").toUpperCase(),
       url: u instanceof Request ? u.url : String(u),
     });
-    return origFetch.apply(this, args);
+    return origFetchX.apply(this, args);
   };
 
   const OrigXHR = window.XMLHttpRequest;
