@@ -86,13 +86,21 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "Page finished: " + url);
                 if (url.contains("kiomet.com")) {
-                    // Inject hook.js via evaluateJavascript (the standard way)
+                    // Step 1: Test KiometBridge availability
+                    view.evaluateJavascript(
+                        "try{console.log('KB_TEST:typeof=' + (typeof KiometBridge));" +
+                        "if(typeof KiometBridge!=='undefined'){KiometBridge.send('KB_TEST:bridge_ok');}" +
+                        "}catch(e){console.log('KB_TEST:err=' + e.message)}",
+                        null
+                    );
+                    Log.i(TAG, "KiometBridge test injected");
+
+                    // Step 2: Inject hook.js with delay
                     if (hookJsContent != null) {
-                        // Small delay to ensure JS context is fully ready
                         handler.postDelayed(() -> {
                             view.evaluateJavascript(hookJsContent, null);
                             Log.i(TAG, "hook.js injected (" + hookJsContent.length() + " bytes)");
-                        }, 500);
+                        }, 1000);
                     }
                 }
             }
