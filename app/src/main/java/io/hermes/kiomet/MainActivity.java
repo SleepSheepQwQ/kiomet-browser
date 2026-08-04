@@ -85,18 +85,22 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "Page finished: " + url);
-                if (!injected && hookJsContent != null && url.contains("kiomet.com")) {
-                    // Inject hook via base64-encoded javascript: URL
-                    // This avoids any encoding issues with special characters
-                    try {
-                        String b64 = android.util.Base64.encodeToString(
-                            hookJsContent.getBytes("UTF-8"),
-                            android.util.Base64.NO_WRAP);
-                        view.loadUrl("javascript:try{eval(atob('" + b64 + "'))}catch(e){}");
-                        injected = true;
-                        Log.i(TAG, "hook.js injected via base64 javascript URL (" + hookJsContent.length() + " bytes)");
-                    } catch (Exception e) {
-                        Log.e(TAG, "Failed to inject hook.js", e);
+                if (!injected && url.contains("kiomet.com")) {
+                    injected = true;
+
+                    // Step 1: Test KiometBridge availability
+                    view.evaluateJavascript(
+                        "try{console.log('KB_TEST: KiometBridge=' + (typeof KiometBridge));" +
+                        "if(typeof KiometBridge!=='undefined'){KiometBridge.send('KB_TEST:bridge_ok');}" +
+                        "}catch(e){console.log('KB_TEST error:' + e.message)}",
+                        null
+                    );
+                    Log.i(TAG, "KiometBridge test injected");
+
+                    // Step 2: Inject the full hook.js
+                    if (hookJsContent != null) {
+                        view.evaluateJavascript(hookJsContent, null);
+                        Log.i(TAG, "hook.js injected via evaluateJavascript (" + hookJsContent.length() + " bytes)");
                     }
                 }
             }
