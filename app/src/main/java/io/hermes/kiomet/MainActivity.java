@@ -15,18 +15,25 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Kiomet Browser — shouldInterceptRequest + addJavascriptInterface.
- * Injects hook.js into HTML, also provides KiometBridge.send().
+ * Kiomet Browser — shouldInterceptRequest + addJavascriptInterface + WebSocket bridge.
+ *
+ * Captures Kiomet traffic and pipes data to a local bridge server.  A background
+ * WebSocket to the bridge carries hook.js events (outbound) and remote commands
+ * (inbound, from the bridge).
  */
 public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
     private static final String BRIDGE = "http://127.0.0.1:9996/log";
+    private static final String WS_URL = "ws://127.0.0.1:9996/?client=kiomet";
+    private static final long WS_CONNECT_MS = 3000;
 
     private WebView webView;
     private String hookJsContent;
@@ -50,6 +57,9 @@ public class MainActivity extends Activity {
         configureWebView();
         webView.loadUrl(TARGET);
         Log.i(TAG, "Kiomet shell started. Bridge: " + BRIDGE);
+
+        // Start bidirectional WebSocket to the bridge
+        startWebSocketBridge();
     }
 
     private void configureWebView() {
@@ -75,19 +85,6 @@ public class MainActivity extends Activity {
                     }
                 }
                 return null;
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                Log.i(TAG, "Page started: " + url);
-                // Re-register bridge on each page load
-                webView.addJavascriptInterface(new Bridge(), "KiometBridge");
-                // Inject a test immediately
-                view.evaluateJavascript(
-                    "console.log('INJECTED');" +
-                    "if(typeof KiometBridge!=='undefined'){KiometBridge.send('INJECTED_OK');}",
-                    null
-                );
             }
 
             @Override
@@ -126,7 +123,7 @@ public class MainActivity extends Activity {
             Log.i(TAG, "Downloaded HTML: " + html.length + " bytes");
         }
 
-        String original = new String(html, StandardCharsets.UTF_8);
+        String original = new String(html, StandardCharsets.UTF-8);
         String hookTag = "<script>" + hookJsContent + "</script>";
 
         String modified;
@@ -138,16 +135,116 @@ public class MainActivity extends Activity {
             modified = hookTag + original;
         }
 
-        byte[] result = modified.getBytes(StandardCharsets.UTF_8);
+        byte[] result = modified.getBytes(StandardCharsets.UTF-8);
         Log.i(TAG, "Injected hook.js (" + result.length + " bytes)");
-
         return new WebResourceResponse(
             "text/html; charset=UTF-8", "UTF-8",
             new ByteArrayInputStream(result));
     }
 
+    // ─── WebSocket bridge (plain TCP, no external deps) ──────────
+    private void startWebSocketBridge() {
+        new Thread(() -> {
+            Log.i(TAG, "Opening WebSocket to " + WS_URL);
+            while (!isFinishing()) {
+                Socket socket = null;
+                try {
+                    socket = new Socket();
+                    socket.connect(new InetSocketAddress("127.0.0.1", 9996),
+                                   (int) WS_CONNECT_MS);
+                    String handshake =
+                        "GET /?client=kiomet HTTP/1.1\r\n" +
+                        "Host: 127.0.0.1:9996\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: rish-hook-key\r\n" +
+                        "Sec-WebSocket-Version: 13\r\n" +
+                        "Sec-WebSocket-Protocol: hook-v1\r\n" +
+                        "\r\n";
+                    socket.getOutputStream().write(handshake.getBytes());
+                    socket.getOutputStream().flush();
+
+                    // Consume server's 101 response until \r\n\r\n
+                    int b;
+                    while ((b = socket.getInputStream().read()) != -1 && b != '\r') {}
+
+                    Log.i(TAG, "WebSocket connected to bridge");
+                    receiveLoop(socket);
+                    socket.close();
+                    Log.i(TAG, "WebSocket disconnected");
+                } catch (java.net.ConnectException e) {
+                    Log.w(TAG, "WebSocket connect refused (bridge not running)");
+                } catch (Exception e) {
+                    Log.e(TAG, "WebSocket error", e);
+                } finally {
+                    try { socket.close(); } catch (Exception ignored) {}
+                }
+
+                // Backoff
+                try { Thread.sleep(2000); } catch (InterruptedException _) { break; }
+            }
+        }).start();
+    }
+
+    private void receiveLoop(Socket socket) throws Exception {
+        byte[] buf = new byte[4096];
+        int len;
+        while ((len = socket.getInputStream().read(buf)) != -1) {
+            // Wire framing: line starts with ':' followed by JSON
+            String frame = new String(buf, 0, len, StandardCharsets.UTF_8).trim();
+            if (frame.isEmpty()) continue;
+
+            // Diagnostics
+            Log.d(TAG, "WS-IN: " + frame);
+
+            if (frame.length() < 2 || frame.charAt(0) != ':') continue;
+            String json = frame.substring(1);
+
+            try {
+                // Minimal JSON parse — look for "cmd" key
+                String cmd = extractJsonString(json, "cmd");
+                String payload = extractJsonString(json, "payload");
+                String requestId = extractJsonString(json, "requestId");
+
+                if (cmd != null) {
+                    Log.i(TAG, "CMD: " + cmd + "  payload=" + (payload != null ? payload : "null"));
+                    webView.post(() -> {
+                        webView.evaluateJavascript(
+                            "window.__hook && window.__hook.handleCommand(" +
+                            "'" + escapeJs(cmd) + "', " +
+                            (payload != null ? "'" + escapeJs(payload) + "'" : "null") +
+                            ", " +
+                            (requestId != null ? "'" + escapeJs(requestId) + "'" : "null") +
+                            ");",
+                            null);
+                    });
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "WS-IN not a command (non-cmd event): " + json.slice(0, 100));
+            }
+        }
+    }
+
+    // Very minimal JSON key-value extractor — safe enough for our wire format
+    private String extractJsonString(String json, String key) {
+        String pat = "\"" + key + "\"";
+        int i = json.indexOf(pat);
+        if (i < 0) return null;
+        int colon = json.indexOf(':', i + pat.length());
+        if (colon < 0) return null;
+        int start = json.indexOf('"', colon + 1);
+        if (start < 0) return null;
+        int end = json.indexOf('"', start + 1);
+        if (end < 0) return null;
+        return json.substring(start + 1, end);
+    }
+
+    private String escapeJs(String s) {
+        return s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+    }
+
     /**
-     * Java bridge — KiometBridge.send() is callable from JavaScript.
+     * Java bridge — KiometBridge.send() / KiometBridge.command() callable from JS.
      */
     private class Bridge {
         @JavascriptInterface
@@ -168,21 +265,6 @@ public class MainActivity extends Activity {
                     conn.disconnect();
                 } catch (Exception ignored) {}
             }).start();
-        }
-    }
-
-    private String readAsset(String filename) {
-        try {
-            InputStream is = getAssets().open(filename);
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buf = new byte[4096];
-            int n;
-            while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
-            is.close();
-            return baos.toString("UTF-8");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to read asset: " + filename, e);
-            return null;
         }
     }
 }
