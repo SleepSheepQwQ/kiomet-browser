@@ -22,7 +22,7 @@
           window.KiometBridge.send(body);
         } else {
           // Use ORIGINAL fetch, not the patched one (would cause recursion)
-          origFetchX("http://127.0.0.1:9998/log", {
+          origFetchX("http://127.0.0.1:9997/log", {
             method: "POST",
             headers: { "Content-Type": "text/plain" },
             body: body,
