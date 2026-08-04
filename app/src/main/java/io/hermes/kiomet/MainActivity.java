@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -12,19 +13,20 @@ import android.webkit.WebViewClient;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Kiomet Browser — shouldInterceptRequest approach.
- * Injects hook.js into the main page HTML BEFORE rendering.
+ * Kiomet Browser — shouldInterceptRequest + addJavascriptInterface.
+ * Injects hook.js into HTML, also provides KiometBridge.send().
  */
 public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
-    private static final String BRIDGE = "http://127.0.0.1:9996";
+    private static final String BRIDGE = "http://127.0.0.1:9996/log";
 
     private WebView webView;
     private String hookJsContent;
@@ -41,6 +43,10 @@ public class MainActivity extends Activity {
 
         webView = findViewById(R.id.webview);
         hookJsContent = readAsset("hook.js");
+
+        // Register Java bridge BEFORE page load
+        webView.addJavascriptInterface(new Bridge(), "KiometBridge");
+
         configureWebView();
         webView.loadUrl(TARGET);
         Log.i(TAG, "Kiomet shell started. Bridge: " + BRIDGE);
@@ -74,6 +80,8 @@ public class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 Log.i(TAG, "Page started: " + url);
+                // Re-register bridge on each page load
+                webView.addJavascriptInterface(new Bridge(), "KiometBridge");
             }
 
             @Override
@@ -130,6 +138,31 @@ public class MainActivity extends Activity {
         return new WebResourceResponse(
             "text/html; charset=UTF-8", "UTF-8",
             new ByteArrayInputStream(result));
+    }
+
+    /**
+     * Java bridge — KiometBridge.send() is callable from JavaScript.
+     */
+    private class Bridge {
+        @JavascriptInterface
+        public void send(final String json) {
+            new Thread(() -> {
+                try {
+                    URL url = new URL(BRIDGE);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "text/plain");
+                    conn.setDoOutput(true);
+                    conn.setConnectTimeout(2000);
+                    conn.setReadTimeout(2000);
+                    OutputStream os = conn.getOutputStream();
+                    os.write(json.getBytes("UTF-8"));
+                    os.close();
+                    conn.getResponseCode();
+                    conn.disconnect();
+                } catch (Exception ignored) {}
+            }).start();
+        }
     }
 
     private String readAsset(String filename) {
