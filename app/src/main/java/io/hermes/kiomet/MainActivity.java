@@ -82,6 +82,12 @@ public class MainActivity extends Activity {
                 Log.i(TAG, "Page started: " + url);
                 // Re-register bridge on each page load
                 webView.addJavascriptInterface(new Bridge(), "KiometBridge");
+                // Inject a test immediately
+                view.evaluateJavascript(
+                    "console.log('INJECTED');" +
+                    "if(typeof KiometBridge!=='undefined'){KiometBridge.send('INJECTED_OK');}",
+                    null
+                );
             }
 
             @Override
