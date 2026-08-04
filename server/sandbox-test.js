@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 // ─── Load hook.js ──────────────────────────────────────────────
-const hookJsPath = path.join(__dirname, '..', 'kiomet-browser', 'app', 'src', 'main', 'assets', 'hook.js');
+const hookJsPath = path.join(__dirname, '../app/src/main/assets/hook.js');
 const hookJs = fs.readFileSync(hookJsPath, 'utf-8');
 console.log(`hook.js loaded: ${hookJs.length} bytes`);
 

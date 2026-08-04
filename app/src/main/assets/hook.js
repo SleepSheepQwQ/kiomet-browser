@@ -14,54 +14,73 @@
 
   // ─── Error tracking ──────────────────────────────────────────
   const errors = [];
+  const MAX_ERRORS = 20;
+  // Guard against recursive error logging — track active depth to break cycles
+  let _logErrorDepth = 0;
   function logError(source, msg, detail) {
-    const err = { ts: ts(), source, msg, detail: String(detail).slice(0, 500) };
-    errors.push(err);
-    if (errors.length > 100) errors.shift();
-    // Also try to send immediately
-    trySend({ event: "error", ts: ts(), data: err });
+    if (_logErrorDepth > 0) return;       // already inside logError — bail
+    _logErrorDepth++;
+    try {
+      const err = { ts: ts(), source, msg, detail: String(detail).slice(0, 200) };
+      errors.push(err);
+      if (errors.length > MAX_ERRORS) errors.shift();
+      trySend({ event: "error", ts: ts(), data: err });
+    } catch (e) {
+      // Final safety net: silent, just remember it
+      errors.push({ ts: ts(), source: "logError", msg: "logError failed", detail: String(e).slice(0, 100) });
+    } finally {
+      _logErrorDepth--;
+    }
   }
 
   // ─── Multi-path send ────────────────────────────────────────
   let sentCount = 0;
+  // Guard against error-handler recursion starving the event loop
+  let _sendDepth = 0;
   function trySend(obj) {
-    const body = JSON.stringify(obj);
-    sentCount++;
-
-    // Path 1: KiometBridge (Java bridge)
+    if (_sendDepth > 0) return;            // skip — we're already in a send cycle
+    _sendDepth++;
     try {
-      if (typeof KiometBridge !== 'undefined') {
-        KiometBridge.send(body);
+      const body = JSON.stringify(obj);
+      sentCount++;
+
+      // Path 1: KiometBridge (Java bridge)
+      try {
+        if (typeof KiometBridge !== 'undefined') {
+          KiometBridge.send(body);
+        }
+      } catch (e) {
+        logError("send", "KiometBridge failed", e.message);
       }
-    } catch (e) {
-      logError("send", "KiometBridge failed", e.message);
-    }
 
-    // Path 2: sendBeacon (most reliable for cross-origin)
-    try {
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        navigator.sendBeacon(BRIDGE, body);
+      // Path 2: sendBeacon (most reliable for cross-origin)
+      try {
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon(BRIDGE, body);
+        }
+      } catch (e) {
+        logError("send", "sendBeacon failed", e.message);
       }
-    } catch (e) {
-      logError("send", "sendBeacon failed", e.message);
-    }
 
-    // Path 3: Image beacon (GET fallback)
-    try {
-      const img = new Image();
-      img.src = BRIDGE + "?d=" + encodeURIComponent(body.slice(0, 1000));
-    } catch (e) {
-      logError("send", "Image beacon failed", e.message);
-    }
+      // Path 3: Image beacon (GET fallback)
+      try {
+        const img = new Image();
+        img.src = BRIDGE + "?d=" + encodeURIComponent(body.slice(0, 1000));
+      } catch (e) {
+        logError("send", "Image beacon failed", e.message);
+      }
 
-    // Path 4: XMLHttpRequest (synchronous, but reliable)
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", BRIDGE, true);
-      xhr.setRequestHeader("Content-Type", "text/plain");
-      xhr.send(body);
-    } catch (e) {
-      logError("send", "XHR failed", e.message);
+      // Path 4: XMLHttpRequest (synchronous, but reliable)
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", BRIDGE, true);
+        xhr.setRequestHeader("Content-Type", "text/plain");
+        xhr.send(body);
+      } catch (e) {
+        logError("send", "XHR failed", e.message);
+      }
+    } finally {
+      _sendDepth--;
     }
   }
 

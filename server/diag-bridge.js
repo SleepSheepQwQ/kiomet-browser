@@ -3,8 +3,7 @@
  * Diagnostic bridge server — receives and logs ALL data from hook.js
  * with detailed error reporting.
  *
- * Usage: node diag-bridge.js
- * Listens on port 9997, logs to diag_*.jsonl
+ * Usage: node diag-bridge.js [--port 9996]
  */
 
 const http = require('http');
@@ -17,6 +16,10 @@ const logStream = fs.createWriteStream(
     { flags: 'a' }
 );
 
+const port = (() => {
+  const idx = process.argv.indexOf('--port');
+  return (idx !== -1 && process.argv[idx + 1]) ? parseInt(process.argv[idx + 1], 10) : 9996;
+})();
 let requestCount = 0;
 let lastRequestTime = 0;
 
@@ -70,11 +73,11 @@ const server = http.createServer((req, res) => {
     });
 });
 
-server.listen(9997, '0.0.0.0', () => {
+server.listen(port, '0.0.0.0', () => {
     console.log('='.repeat(60));
     console.log('DIAGNOSTIC BRIDGE SERVER');
     console.log('='.repeat(60));
-    console.log(`Listening: http://0.0.0.0:9997`);
+    console.log(`Listening: http://0.0.0.0:9996`);
     console.log(`Log file: ${logStream.path}`);
     console.log('='.repeat(60));
     console.log('Waiting for data...\n');

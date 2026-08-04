@@ -6,7 +6,7 @@ Usage:
     pip3 install asyncio
     python3 bridge-server.py [--port 9998]
 
-hook.js sends fetch POST to http://localhost:9998/log
+hook.js sends fetch POST to http://localhost:9996/log
 """
 
 import asyncio
@@ -20,7 +20,7 @@ LOG_DIR.mkdir(exist_ok=True)
 
 
 class HTTPBridge:
-    def __init__(self, host: str = "0.0.0.0", port: int = 9998):
+    def __init__(self, host: str = "0.0.0.0", port: int = 9996):
         self.host = host
         self.port = port
         self.log_file = LOG_DIR / f"bridge_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
@@ -170,7 +170,7 @@ class HTTPBridge:
 
 def main():
     host = "0.0.0.0"
-    port = 9998
+    port = 9996
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--port" and i + 2 < len(sys.argv):
             port = int(sys.argv[i + 2])
