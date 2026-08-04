@@ -2,39 +2,33 @@ package io.hermes.kiomet;
 
 import android.app.Activity;
 import android.os.Bundle;
-import android.os.Handler;
 import android.util.Log;
 import android.view.WindowManager;
-import android.webkit.ConsoleMessage;
-import android.webkit.JavascriptInterface;
-import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 /**
- * Kiomet Browser — debug shell.
- *
- * Uses addJavascriptInterface (KiometBridge.send) + evaluateJavascript
- * in onPageFinished with a small delay. The hook.js is injected after
- * the page loads, but all captured data is sent via the Java bridge
- * which makes HTTP requests from a background thread.
+ * Kiomet Browser — shouldInterceptRequest approach.
+ * Injects hook.js into the main page HTML BEFORE rendering.
  */
 public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
-    private static final String BRIDGE = "http://127.0.0.1:9996/log";
+    private static final String BRIDGE = "http://127.0.0.1:9996";
 
     private WebView webView;
-    private Bridge bridge;
     private String hookJsContent;
-    private final Handler handler = new Handler();
+    private byte[] cachedHtml;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,11 +40,7 @@ public class MainActivity extends Activity {
             WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         webView = findViewById(R.id.webview);
-        bridge = new Bridge();
         hookJsContent = readAsset("hook.js");
-
-        // Register bridge BEFORE page load (persists across navigations)
-        webView.addJavascriptInterface(bridge, "KiometBridge");
         configureWebView();
         webView.loadUrl(TARGET);
         Log.i(TAG, "Kiomet shell started. Bridge: " + BRIDGE);
@@ -66,72 +56,80 @@ public class MainActivity extends Activity {
         ws.setCacheMode(WebSettings.LOAD_NO_CACHE);
         WebView.setWebContentsDebuggingEnabled(true);
 
-        webView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public boolean onConsoleMessage(ConsoleMessage cm) {
-                Log.i(TAG, String.format("[%s] %s", cm.messageLevel().name(), cm.message()));
-                return super.onConsoleMessage(cm);
-            }
-        });
-
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.contains("kiomet.com")) {
+                    try {
+                        return injectHook(url);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Intercept failed", e);
+                    }
+                }
+                return null;
+            }
+
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 Log.i(TAG, "Page started: " + url);
-                // Re-register bridge on each page load
-                webView.addJavascriptInterface(bridge, "KiometBridge");
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 Log.i(TAG, "Page finished: " + url);
-                if (url.contains("kiomet.com")) {
-                    // Step 1: Test KiometBridge availability
-                    view.evaluateJavascript(
-                        "try{console.log('KB_TEST:typeof=' + (typeof KiometBridge));" +
-                        "if(typeof KiometBridge!=='undefined'){KiometBridge.send('KB_TEST:bridge_ok');}" +
-                        "}catch(e){console.log('KB_TEST:err=' + e.message)}",
-                        null
-                    );
-                    Log.i(TAG, "KiometBridge test injected");
-
-                    // Step 2: Inject hook.js with delay
-                    if (hookJsContent != null) {
-                        handler.postDelayed(() -> {
-                            view.evaluateJavascript(hookJsContent, null);
-                            Log.i(TAG, "hook.js injected (" + hookJsContent.length() + " bytes)");
-                        }, 1000);
-                    }
-                }
             }
         });
     }
 
-    /**
-     * Java bridge exposed to JavaScript as KiometBridge.send(json).
-     */
-    private class Bridge {
-        @JavascriptInterface
-        public void send(final String json) {
-            new Thread(() -> {
-                try {
-                    URL url = new URL(BRIDGE);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "text/plain");
-                    conn.setDoOutput(true);
-                    conn.setConnectTimeout(2000);
-                    conn.setReadTimeout(2000);
-                    OutputStream os = conn.getOutputStream();
-                    os.write(json.getBytes("UTF-8"));
-                    os.close();
-                    conn.getResponseCode();
-                    conn.disconnect();
-                } catch (Exception ignored) {
-                    Log.e(TAG, "Bridge send failed: " + ignored.getMessage());
-                }
-            }).start();
+    private WebResourceResponse injectHook(String url) throws Exception {
+        if (hookJsContent == null) return null;
+
+        byte[] html;
+        if (cachedHtml != null) {
+            html = cachedHtml;
+        } else {
+            java.net.URL targetUrl = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) targetUrl.openConnection();
+            conn.setRequestProperty("User-Agent",
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36");
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            InputStream is = conn.getInputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
+            is.close();
+            conn.disconnect();
+            html = baos.toByteArray();
+            cachedHtml = html;
+            Log.i(TAG, "Downloaded HTML: " + html.length + " bytes");
         }
+
+        String original = new String(html, StandardCharsets.UTF_8);
+        String hookTag = "<script>" + hookJsContent + "</script>";
+
+        String modified;
+        if (original.contains("</head>")) {
+            modified = original.replace("</head>", hookTag + "</head>");
+        } else if (original.contains("</body>")) {
+            modified = original.replace("</body>", hookTag + "</body>");
+        } else {
+            modified = hookTag + original;
+        }
+
+        byte[] result = modified.getBytes(StandardCharsets.UTF_8);
+        Log.i(TAG, "Injected hook.js (" + result.length + " bytes)");
+
+        return new WebResourceResponse(
+            "text/html; charset=UTF-8", "UTF-8",
+            new ByteArrayInputStream(result));
     }
 
     private String readAsset(String filename) {
