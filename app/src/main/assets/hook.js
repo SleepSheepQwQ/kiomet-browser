@@ -9,7 +9,7 @@
   if (window.__hook) return;
   window.__hook = { booted: false, errors: [], events: 0 };
 
-  const BRIDGE = "http://127.0.0.1:9997/log";
+  const BRIDGE = "http://127.0.0.1:9996/log";
   const ts = () => Date.now();
 
   // ─── Error tracking ──────────────────────────────────────────
