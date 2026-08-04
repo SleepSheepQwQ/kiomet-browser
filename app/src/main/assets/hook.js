@@ -15,22 +15,27 @@
   const origFetchX = window.fetch;
 
   function send(event, data) {
-      try {
-        const body = JSON.stringify({ event, ts: ts(), data: data || {} });
-        // Try Java bridge first (no CORS, no network restrictions)
-        if (window.KiometBridge) {
-          window.KiometBridge.send(body);
-        } else {
-          // Use ORIGINAL fetch, not the patched one (would cause recursion)
-          origFetchX("http://127.0.0.1:9997/log", {
-            method: "POST",
-            headers: { "Content-Type": "text/plain" },
-            body: body,
-            keepalive: true,
-          }).catch(() => {});
-        }
-      } catch (e) { /* silently ignore */ }
-    }
+        try {
+          const body = JSON.stringify({ event, ts: ts(), data: data || {} });
+          // Try Java bridge first (no CORS, no network restrictions)
+          if (window.KiometBridge) {
+            window.KiometBridge.send(body);
+          }
+          // Also try sendBeacon — simple, reliable, no CORS issues
+          try {
+            navigator.sendBeacon("http://127.0.0.1:9997/log", body);
+          } catch(e) {}
+          // Also try origFetch (saved before patching)
+          try {
+            origFetchX("http://127.0.0.1:9997/log", {
+              method: "POST",
+              headers: { "Content-Type": "text/plain" },
+              body: body,
+              keepalive: true,
+            }).catch(() => {});
+          } catch(e) {}
+        } catch (e) { /* silently ignore */ }
+      }
 
   // ─── heartbeat ─────────────────────────────────────────────────
   setInterval(() => send("heartbeat", {}), 10000);
