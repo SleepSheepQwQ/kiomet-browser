@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "KBrowser";
     private static final String TARGET = "https://kiomet.com/";
-    private static final String BRIDGE_HOST = "http://127.0.0.1:9998";
+    private static final String BRIDGE_HOST = "http://127.0.0.1:9997";
 
     private WebView webView;
     private String hookJsContent;
