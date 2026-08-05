@@ -38,23 +38,29 @@ jobs:
           echo "Build APK:"; ls -la "$APK"
           mkdir -p artifact
 
-          # --- Get zipalign (AGP 8.5 doesn't ship it on ubuntu-latest) ---
+          # --- Get zipalign + apksigner (both in build-tools) ---
           ZALIGN="$(command -v zipalign 2>/dev/null || true)"
+          APSIGN="$(command -v apksigner 2>/dev/null || true)"
           BT_VER="34.0.0"
-          if [ -z "$ZALIGN" ]; then
-            echo "Downloading build-tools for zipalign..."
+          BT_DIR=""
+          if [ -z "$ZALIGN" ] || [ -z "$APSIGN" ]; then
+            echo "Downloading build-tools for zipalign/apksigner..."
             if curl -fsSL "https://dl.google.com/android/repository/android-${BT_VER}_build-tools_r34-linux.zip" -o /tmp/bt.zip; then
               unzip -qo /tmp/bt.zip -d /tmp
-              ZALIGN="/tmp/${BT_VER}/zipalign"
+              BT_DIR="/tmp/${BT_VER}"
             else
               echo "BT direct download 404 — cmdline-tools fallback..."
               curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -o /tmp/clt.zip
               unzip -qo /tmp/clt.zip -d /tmp
               echo "y" | /tmp/cmdline-tools/bin/sdkmanager --sdk_root=/tmp/sdk "build-tools;${BT_VER}" >/dev/null 2>&1 || true
-              ZALIGN="/tmp/sdk/build-tools/${BT_VER}/zipalign"
+              BT_DIR="/tmp/sdk/build-tools/${BT_VER}"
             fi
+            [ -d "$BT_DIR" ] || { echo "build-tools dir not found"; exit 1; }
+            ZALIGN="$BT_DIR/zipalign"
+            APSIGN="$BT_DIR/apksigner"
             [ -f "$ZALIGN" ] || { echo "zipalign not found"; exit 1; }
-            echo "Got: $ZALIGN"
+            [ -f "$APSIGN" ] || { echo "apksigner not found"; exit 1; }
+            echo "Got: $ZALIGN, $APSIGN"
           fi
 
           # --- zipalign (destroys AGP v2 signature; we resign after with standard debug keystore) ---
