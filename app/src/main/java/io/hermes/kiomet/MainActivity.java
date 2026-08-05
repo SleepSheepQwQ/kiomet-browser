@@ -181,7 +181,7 @@ public class MainActivity extends Activity {
                 }
 
                 // Backoff
-                try { Thread.sleep(2000); } catch (InterruptedException _) { break; }
+                try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
             }
         }).start();
     }
