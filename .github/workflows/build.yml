@@ -75,7 +75,7 @@ jobs:
             -storepass android -keypass android \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          apksigner sign \
+          "$APSIGN" sign \
             --ks artifact/debug.keystore \
             --ks-pass pass:android \
             --ks-key-alias androiddebugkey \
@@ -86,7 +86,7 @@ jobs:
 
           # --- Verify ---
           echo "--- apksigner verify ---"
-          apksigner verify --verbose artifact/app-debug.apk
+          "$APSIGN" verify --verbose artifact/app-debug.apk
           echo "--- zipalign verify ---"
           "$ZALIGN" -c -p 4 artifact/app-debug.apk && echo "zipalign OK"
 
