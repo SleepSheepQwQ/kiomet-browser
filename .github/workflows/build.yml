@@ -32,11 +32,12 @@ jobs:
 
       - name: Verify APK signature
         run: |
-          APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -1)
-          echo "APK=$APK"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
           [ -f "$APK" ] || { echo "APK not found!"; exit 1; }
           ls -la "$APK"
-          # Verify it has META-INF signature
+          mkdir -p artifact
+
+          # AGP 8.5 should sign automatically, but verify and fallback-sign if missing
           jar -tf "$APK" | grep -q "META-INF/.*\.SF" || {
             echo "APK is UNSIGNED — signing with debug keystore..."
             keytool -genkeypair -noprompt \
@@ -50,10 +51,20 @@ jobs:
               "$APK" androiddebugkey
             echo "Signed."
           }
+
+          # Verify signature files present
           echo "--- Signature files in APK ---"
-          jar -tf "$APK" | grep "META-INF/.*\.SF\|META-INF/.*\.RSA"
-          mkdir -p artifact
-          cp "$APK" artifact/app-debug.apk
+          jar -tf "$APK" | grep "META-INF/.*\.\(SF\|RSA\)"
+
+          # zipalign is mandatory for Android R+ (API 30+)
+          echo "--- Aligning APK ---"
+          zipalign -p -v 4 "$APK" artifact/app-debug.apk
+          echo "Aligned."
+          ls -la artifact/app-debug.apk
+
+          # Final verification
+          echo "--- Final signature check ---"
+          jar -tf artifact/app-debug.apk | grep "META-INF/.*\.\(SF\|RSA\)"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
