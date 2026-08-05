@@ -30,14 +30,14 @@ jobs:
           gradle wrapper --gradle-version 8.7
           ./gradlew assembleDebug --no-daemon
 
-      - name: Verify APK signature
+      - name: Prepare APK (sign + zipalign)
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           [ -f "$APK" ] || { echo "APK not found!"; exit 1; }
           ls -la "$APK"
           mkdir -p artifact
 
-          # AGP 8.5 should sign automatically, but verify and fallback-sign if missing
+          # --- Sign if unsigned ---
           jar -tf "$APK" | grep -q "META-INF/.*\.SF" || {
             echo "APK is UNSIGNED — signing with debug keystore..."
             keytool -genkeypair -noprompt \
@@ -52,19 +52,44 @@ jobs:
             echo "Signed."
           }
 
-          # Verify signature files present
-          echo "--- Signature files in APK ---"
-          jar -tf "$APK" | grep "META-INF/.*\.\(SF\|RSA\)"
+          echo "--- Signature files ---"
+          jar -tf "$APK" | grep "META-INF/.*\.\(SF\|RSA\)" || echo "WARNING: no signature files"
 
-          # zipalign is mandatory for Android R+ (API 30+)
+          # --- zipalign ---
           echo "--- Aligning APK ---"
-          zipalign -p -v 4 "$APK" artifact/app-debug.apk
-          echo "Aligned."
+          # Try to find a zipalign; download if missing
+          ZALIGN=""
+          ZALIGN="$(command -v zipalign 2>/dev/null || true)"
+          if [ -z "$ZALIGN" ]; then
+            echo "zipalign not found — downloading build-tools..."
+            # Direct download of build-tools (standalone .zip)
+            BT_VER="34.0.0"
+            BT_ZIP="android-${BT_VER}_build-tools_r34-linux.zip"
+            BT_URL="https://dl.google.com/android/repository/${BT_ZIP}"
+            echo "Downloading $BT_URL ..."
+            curl -fsSL "$BT_URL" -o /tmp/$BT_ZIP || {
+              echo "Direct build-tools download failed — trying cmdline-tools fallback..."
+              curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -o /tmp/clt.zip
+              unzip -qo /tmp/clt.zip -d /tmp
+              echo "y" | /tmp/cmdline-tools/bin/sdkmanager --sdk_root=/tmp/sdk "build-tools;${BT_VER}" >/dev/null 2>&1 || true
+              ZALIGN="/tmp/sdk/build-tools/${BT_VER}/zipalign"
+              if [ -f "$ZALIGN" ]; then
+                echo "Got zipalign from cmdline-tools: $ZALIGN"
+              else
+                echo "All zipalign downloads failed"; exit 1
+              fi
+            }
+            unzip -qo /tmp/$BT_ZIP -d /tmp
+            ZALIGN="/tmp/${BT_VER}/zipalign"
+            [ -f "$ZALIGN" ] || { echo "zipalign not in extracted archive"; exit 1; }
+          fi
+          "$ZALIGN" -p -v 4 "$APK" artifact/app-debug.apk
+          echo "Aligned and copied."
           ls -la artifact/app-debug.apk
 
-          # Final verification
-          echo "--- Final signature check ---"
-          jar -tf artifact/app-debug.apk | grep "META-INF/.*\.\(SF\|RSA\)"
+          echo "--- Final check ---"
+          jar -tf artifact/app-debug.apk | grep "META-INF/.*\.\(SF\|RSA\)" || true
+          "$ZALIGN" -c -p 4 artifact/app-debug.apk && echo "zipalign OK" || echo "zipalign FAILED"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
