@@ -25,19 +25,38 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Install Gradle
-        run: |
-          curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q /tmp/gradle.zip -d /opt
-          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
-
       - name: Build APK
         run: |
-          gradle wrapper --gradle-version 8.7 2>/dev/null || true
-          gradle assembleDebug --no-daemon
+          gradle wrapper --gradle-version 8.7
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK signature
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -1)
+          echo "APK=$APK"
+          [ -f "$APK" ] || { echo "APK not found!"; exit 1; }
+          ls -la "$APK"
+          # Verify it has META-INF signature
+          jar -tf "$APK" | grep -q "META-INF/.*\.SF" || {
+            echo "APK is UNSIGNED — signing with debug keystore..."
+            keytool -genkeypair -noprompt \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -keystore debug.keystore \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+            jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+              -keystore debug.keystore -storepass android -keypass android \
+              "$APK" androiddebugkey
+            echo "Signed."
+          }
+          echo "--- Signature files in APK ---"
+          jar -tf "$APK" | grep "META-INF/.*\.SF\|META-INF/.*\.RSA"
+          mkdir -p artifact
+          cp "$APK" artifact/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kiomet-browser
-          path: app/build/outputs/apk/**/*.apk
+          path: artifact/
