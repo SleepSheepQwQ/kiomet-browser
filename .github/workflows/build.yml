@@ -46,7 +46,7 @@ jobs:
               -keystore debug.keystore \
               -storepass android -keypass android \
               -dname "CN=Android Debug,O=Android,C=US"
-            jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA256 \
               -keystore debug.keystore -storepass android -keypass android \
               "$APK" androiddebugkey
             echo "Signed."
@@ -61,27 +61,23 @@ jobs:
           ZALIGN=""
           ZALIGN="$(command -v zipalign 2>/dev/null || true)"
           if [ -z "$ZALIGN" ]; then
-            echo "zipalign not found — downloading build-tools..."
             # Direct download of build-tools (standalone .zip)
             BT_VER="34.0.0"
             BT_ZIP="android-${BT_VER}_build-tools_r34-linux.zip"
             BT_URL="https://dl.google.com/android/repository/${BT_ZIP}"
             echo "Downloading $BT_URL ..."
-            curl -fsSL "$BT_URL" -o /tmp/$BT_ZIP || {
+            if curl -fsSL "$BT_URL" -o /tmp/$BT_ZIP; then
+              unzip -qo /tmp/$BT_ZIP -d /tmp
+              ZALIGN="/tmp/${BT_VER}/zipalign"
+            else
               echo "Direct build-tools download failed — trying cmdline-tools fallback..."
               curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -o /tmp/clt.zip
               unzip -qo /tmp/clt.zip -d /tmp
               echo "y" | /tmp/cmdline-tools/bin/sdkmanager --sdk_root=/tmp/sdk "build-tools;${BT_VER}" >/dev/null 2>&1 || true
               ZALIGN="/tmp/sdk/build-tools/${BT_VER}/zipalign"
-              if [ -f "$ZALIGN" ]; then
-                echo "Got zipalign from cmdline-tools: $ZALIGN"
-              else
-                echo "All zipalign downloads failed"; exit 1
-              fi
-            }
-            unzip -qo /tmp/$BT_ZIP -d /tmp
-            ZALIGN="/tmp/${BT_VER}/zipalign"
-            [ -f "$ZALIGN" ] || { echo "zipalign not in extracted archive"; exit 1; }
+            fi
+            [ -f "$ZALIGN" ] || { echo "Failed to get zipalign"; exit 1; }
+            echo "Got zipalign: $ZALIGN"
           fi
           "$ZALIGN" -p -v 4 "$APK" artifact/app-debug.apk
           echo "Aligned and copied."
