@@ -30,65 +30,65 @@ jobs:
           gradle wrapper --gradle-version 8.7
           ./gradlew assembleDebug --no-daemon
 
-      - name: Prepare APK (sign + zipalign)
+      - name: zipalign + sign APK
         run: |
+          set -e
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          [ -f "$APK" ] || { echo "APK not found!"; exit 1; }
-          ls -la "$APK"
+          [ -f "$APK" ] || { echo "APK not found"; exit 1; }
+          echo "Build APK:"; ls -la "$APK"
           mkdir -p artifact
 
-          # --- Sign if unsigned ---
-          jar -tf "$APK" | grep -q "META-INF/.*\.SF" || {
-            echo "APK is UNSIGNED — signing with debug keystore..."
-            keytool -genkeypair -noprompt \
-              -alias androiddebugkey \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -keystore debug.keystore \
-              -storepass android -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
-            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA256 \
-              -keystore debug.keystore -storepass android -keypass android \
-              "$APK" androiddebugkey
-            echo "Signed."
-          }
-
-          echo "--- Signature files ---"
-          jar -tf "$APK" | grep "META-INF/.*\.\(SF\|RSA\)" || echo "WARNING: no signature files"
-
-          # --- zipalign ---
-          echo "--- Aligning APK ---"
-          # Try to find a zipalign; download if missing
-          ZALIGN=""
+          # --- Get zipalign (AGP 8.5 doesn't ship it on ubuntu-latest) ---
           ZALIGN="$(command -v zipalign 2>/dev/null || true)"
+          BT_VER="34.0.0"
           if [ -z "$ZALIGN" ]; then
-            # Direct download of build-tools (standalone .zip)
-            BT_VER="34.0.0"
-            BT_ZIP="android-${BT_VER}_build-tools_r34-linux.zip"
-            BT_URL="https://dl.google.com/android/repository/${BT_ZIP}"
-            echo "Downloading $BT_URL ..."
-            if curl -fsSL "$BT_URL" -o /tmp/$BT_ZIP; then
-              unzip -qo /tmp/$BT_ZIP -d /tmp
+            echo "Downloading build-tools for zipalign..."
+            if curl -fsSL "https://dl.google.com/android/repository/android-${BT_VER}_build-tools_r34-linux.zip" -o /tmp/bt.zip; then
+              unzip -qo /tmp/bt.zip -d /tmp
               ZALIGN="/tmp/${BT_VER}/zipalign"
             else
-              echo "Direct build-tools download failed — trying cmdline-tools fallback..."
+              echo "BT direct download 404 — cmdline-tools fallback..."
               curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -o /tmp/clt.zip
               unzip -qo /tmp/clt.zip -d /tmp
               echo "y" | /tmp/cmdline-tools/bin/sdkmanager --sdk_root=/tmp/sdk "build-tools;${BT_VER}" >/dev/null 2>&1 || true
               ZALIGN="/tmp/sdk/build-tools/${BT_VER}/zipalign"
             fi
-            [ -f "$ZALIGN" ] || { echo "Failed to get zipalign"; exit 1; }
-            echo "Got zipalign: $ZALIGN"
+            [ -f "$ZALIGN" ] || { echo "zipalign not found"; exit 1; }
+            echo "Got: $ZALIGN"
           fi
-          "$ZALIGN" -p -v 4 "$APK" artifact/app-debug.apk
-          echo "Aligned and copied."
-          ls -la artifact/app-debug.apk
 
-          echo "--- Final check ---"
-          jar -tf artifact/app-debug.apk | grep "META-INF/.*\.\(SF\|RSA\)" || true
-          "$ZALIGN" -c -p 4 artifact/app-debug.apk && echo "zipalign OK" || echo "zipalign FAILED"
+          # --- zipalign (destroys AGP v2 signature; we resign after with standard debug keystore) ---
+          "$ZALIGN" -p -v 4 "$APK" artifact/app-aligned.apk
+          echo "Aligned:"; ls -la artifact/app-aligned.apk
+
+          # --- Sign with standard debug keystore via apksigner (v2 + v3, never breaks alignment) ---
+          keytool -genkeypair -noprompt \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -keystore artifact/debug.keystore \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          apksigner sign \
+            --ks artifact/debug.keystore \
+            --ks-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --key-pass pass:android \
+            --out artifact/app-debug.apk \
+            artifact/app-aligned.apk
+          echo "Signed with apksigner (v2+v3)."
+
+          # --- Verify ---
+          echo "--- apksigner verify ---"
+          apksigner verify --verbose artifact/app-debug.apk
+          echo "--- zipalign verify ---"
+          "$ZALIGN" -c -p 4 artifact/app-debug.apk && echo "zipalign OK"
+
+          rm -f artifact/app-aligned.apk
+          echo "Final APK:"; ls -la artifact/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kiomet-browser
-          path: artifact/
+          path: artifact/app-debug.apk
